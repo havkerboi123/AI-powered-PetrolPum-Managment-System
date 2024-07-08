@@ -1,139 +1,132 @@
-
 import streamlit as st
-import mysql.connector
-import pandas as pd
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_community.utilities import SQLDatabase
+from langchain_core.output_parsers import StrOutputParser
+from langchain_openai import ChatOpenAI
 
-from create import *
-from database import *
-from delete import *
-from read import *
-from update import *
+def init_database(user: str, password: str, host: str, port: str, database: str) -> SQLDatabase:
+    db_uri = f"mysql+mysqlconnector://{user}:{password}@{host}:{port}/{database}"
+    return SQLDatabase.from_uri(db_uri)
 
-def main():
-   st.title("Petrol Pump Management System")
-   menu = ["PetrolPump", "Owners", "Employee", "Customer","Invoice", "Tanker","Query"]
-   choice = st.sidebar.selectbox("Tables", menu)
+def get_sql_chain(db):
+    template = """
+    You are a data analyst at a company. You are interacting with a user who is asking you questions about the company's database.
+    Based on the table schema below, write a SQL query that would answer the user's question. Take the conversation history into account.
+    
+    <SCHEMA>{schema}</SCHEMA>
+    
+    Conversation History: {chat_history}
+    
+    Write only the SQL query and nothing else. Do not wrap the SQL query in any other text, not even backticks.
+    
+    For example:
+    Question: which 3 artists have the most tracks?
+    SQL Query: SELECT ArtistId, COUNT(*) as track_count FROM Track GROUP BY ArtistId ORDER BY track_count DESC LIMIT 3;
+    Question: Name 10 artists
+    SQL Query: SELECT Name FROM Artist LIMIT 10;
+    
+    Your turn:
+    
+    Question: {question}
+    SQL Query:
+    """
+    
+    prompt = ChatPromptTemplate.from_template(template)
+  
+    llm = ChatOpenAI(model="gpt-4-0125-preview", api_key="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")
+  
+    def get_schema(_):
+        return db.get_table_info()
+  
+    return (
+        RunnablePassthrough.assign(schema=get_schema)
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    
+def get_response(user_query: str, db: SQLDatabase, chat_history: list):
+    sql_chain = get_sql_chain(db)
+  
+    template = """
+    You are a data analyst at a company. You are interacting with a user who is asking you questions about the company's database.
+    Based on the table schema below, question, sql query, and sql response, write a natural language response.
+    <SCHEMA>{schema}</SCHEMA>
 
-   create_table()
-   
-   if choice == "PetrolPump":
-      menu = ["Add", "View", "Update", "remove"]
-      choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-      if choice2 == "Add":
-         st.subheader("Enter Petrolpump Details:")
-         create_for_Petrolpump()
-      elif choice2 == "View":
-         st.subheader("View the Petrolpump details:")
-         read_for_Petrolpump()
-      elif choice2 == "Update":
-         st.subheader("Updated petrolpump  tasks")
-         update_for_Petrolpump()
-      elif choice2 == "remove":
-         st.subheader("Deleted petrolpump  tasks")
-         delete_for_Petrolpump()
+    Conversation History: {chat_history}
+    SQL Query: <SQL>{query}</SQL>
+    User question: {question}
+    SQL Response: {response}"""
+  
+    prompt = ChatPromptTemplate.from_template(template)
+  
+    llm = ChatOpenAI(model="gpt-4-0125-preview", api_key="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")
+  
+    chain = (
+        RunnablePassthrough.assign(query=sql_chain).assign(
+            schema=lambda _: db.get_table_info(),
+            response=lambda vars: db.run(vars["query"]),
+        )
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+  
+    return chain.invoke({
+        "question": user_query,
+        "chat_history": chat_history,
+    })
 
-   elif choice == "Owners":
-      menu = ["Add", "View", "Update", "Remove"]
-      choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-      if choice2 == "Add":
-            st.subheader("Enter Owners Details:")
-            create_for_Owners()
-      elif choice2 == "View":
-            st.subheader("View Owners details:")
-            read_for_Owners()
-      elif choice2 == "Update":
-            st.subheader("Update created tasks")
-            update_for_Owners()
-      elif choice2 == "Remove":
-            st.subheader("Delete created tasks")
-            delete_for_Owners()
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [
+        AIMessage(content="Hello! I'm a SQL assistant. Ask me anything about your database."),
+    ]
 
-   elif choice == "Employee":
-      menu = ["Add", "View", "Update", "Remove"]
-      choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-      if choice2 == "Add":
-         st.subheader("Enter Employee Details:")
-         create_for_Employee()
-      elif choice2 == "View":
-         st.subheader("View the Employee details:")
-         read_for_Employee()
-      elif choice2 == "Update":
-         st.subheader("Update created tasks")
-         update_for_Employee()
-      elif choice2 == "Remove":
-         st.subheader("Delete created tasks")
-         delete_for_Employee()
+st.set_page_config(page_title="Chat with Petrol mangement system", page_icon=":speech_balloon:")
 
-   elif choice == "Customer":
-     menu = ["Add", "View", "Update", "Remove"]
-     choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-     if choice2 == "Add":
-         st.subheader("Enter trainer Details:")
-         create_for_Customer()
-     elif choice2 == "View":
-         st.subheader("View the trainer details:")
-         read_for_Customer()
-     elif choice2 == "Update":
-         st.subheader("Update created tasks")
-         update_for_Customer()
-     elif choice2 == "Remove":
-         st.subheader("Delete created tasks")
-         delete_for_Customer()
+st.title("Chat with Petrol mangement system")
 
-   elif choice == "Invoice":
-     menu = ["Add", "View", "Update", "Remove"]
-     choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-     if choice2 == "Add":
-         st.subheader("Enter Invoice Details:")
-         create_for_Invoice()
-     elif choice2 == "View":
-         st.subheader("View the Invoice details:")
-         read_for_Invoice()
-     elif choice2 == "Update":
-         st.subheader("Update created tasks")
-         update_for_Invoice()
-     elif choice2 == "Remove":
-         st.subheader("Delete created tasks")
-         delete_for_Invoice()
+with st.sidebar:
+    st.subheader("Settings")
+    st.write("This is a simple chat application using MySQL. Connect to the database and start chatting.")
+    
+    st.text_input("Host", value="localhost", key="Host")
+    st.text_input("Port", value="3306", key="Port")
+    st.text_input("User", value="root", key="User")
+    st.text_input("Password", type="password", value="admin", key="Password")
+    st.text_input("Database", value="Chinook", key="Database")
+    
+    if st.button("Connect"):
+        with st.spinner("Connecting to database..."):
+            db = init_database(
+                st.session_state["User"],
+                st.session_state["Password"],
+                st.session_state["Host"],
+                st.session_state["Port"],
+                st.session_state["Database"]
+            )
+            st.session_state.db = db
+            st.success("Connected to database!")
+    
+for message in st.session_state.chat_history:
+    if isinstance(message, AIMessage):
+        with st.chat_message("AI"):
+            st.markdown(message.content)
+    elif isinstance(message, HumanMessage):
+        with st.chat_message("Human"):
+            st.markdown(message.content)
 
-   elif choice == "Tanker":
-     menu = ["Add", "View", "Update", "Remove"]
-     choice2 = st.sidebar.selectbox("CRUD Operations", menu)
-     if choice2 == "Add":
-         st.subheader("Enter Tanker Details:")
-         create_for_Tanker()
-     elif choice2 == "View":
-         st.subheader("View the Tanker details:")
-         read_for_Tanker()
-     elif choice2 == "Update":
-         st.subheader("Update created tasks")
-         update_for_Tanker()
-     elif choice2 == "Remove":
-         st.subheader("Delete created tasks")
-         delete_for_Tanker()
-
-
-   elif choice == "Query":
-      menu = ["Custom Query","Function"]
-      choice2 = st.sidebar.selectbox("Query", menu)
-      if choice2 == "Custom Query":
-         query = st.text_input("Enter Your Query:")
-         if st.button("Run Query"):
-            c.execute(query)
-            data = c.fetchall()
-            st.dataframe(data)
-      elif choice2 == "Function":
-         net_value()
-
-   else:
-      st.subheader("About tasks")
-
-def net_value():
-   tanker_id = st.text_input("Enter Tanker ID:")
-   result = TOTAL_Amount(tanker_id)
-   if st.button("RUN Function"):
-      df2=pd.DataFrame(result, columns = ["Total Amount"])
-      st.dataframe(df2)
-
-if __name__ == '__main__':
-   main()
+user_query = st.chat_input("Type a message...")
+if user_query is not None and user_query.strip() != "":
+    st.session_state.chat_history.append(HumanMessage(content=user_query))
+    
+    with st.chat_message("Human"):
+        st.markdown(user_query)
+        
+    with st.chat_message("AI"):
+        response = get_response(user_query, st.session_state.db, st.session_state.chat_history)
+        st.markdown(response)
+        
+    st.session_state.chat_history.append(AIMessage(content=response))
